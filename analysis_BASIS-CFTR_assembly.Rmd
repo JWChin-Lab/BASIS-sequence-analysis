@@ -1,0 +1,458 @@
+---
+title: "Analysis for final CFTR BASIS assembly"
+author: "Pierre Murat, Askar Kleefeldt"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+
+---
+# Prepare and index genomes
+Human and bacterial genomes are catenated to generate a chimeric genomes used for alignment.
+
+Human genome: Ensembl hg38/GRCh38
+E. Coli: MDS42
+Helper vectors: pKW20 and pLF118
+
+```{bash, eval = F}
+srun -c 112 --pty bash
+# Extract contigs names
+grep "^>" ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa > ./BASIS/Sequences/contig_names/hg38.seqname.txt
+grep "^>" ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa > ./BASIS/Sequences/contig_names/MDS42.seqname.txt
+grep "^>" ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa > ./BASIS/Sequences/contig_names/p20.seqname.txt
+grep "^>" ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa > ./BASIS/Sequences/contig_names/pLF118.seqname.txt
+
+# Manually modify headers of bacterial fa files / re-run
+# Join genomes and indexes
+cat ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+    ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa \
+    ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa \
+    ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa \
+    > ./BASIS/Genomes/hg38.MDS42.fa
+grep "^>" ./BASIS/Genomes/hg38.MDS42.fa > ./BASIS/Sequences/contig_names/hg38.MDS42.seqname.txt
+
+./Software/bwa/bwa index ./BASIS/Genomes/hg38.MDS42.fa
+samtools faidx ./BASIS/Genomes/hg38.MDS42.fa
+./Software/gatk-4.2.5.0/gatk CreateSequenceDictionary -R ./BASIS/Genomes/hg38.MDS42.fa
+```
+
+# Create a reference haplotype
+## Read alignment
+
+FASTQ from individual input BACs (CFTR_BAC01, CFTR_BAC02, CFTR_BAC03) are combined and aligned to the reference genome.
+
+```{bash, eval = F}
+
+# align concatenated BAC fastq files to chimeric genome
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.fa CFTR_v02/Data/fastq_BACs/BACs.r1.fq.gz CFTR_v02/Data/fastq_BACs/BACs.r2.fq.gz > CFTR_v02/Data/SAM/BACs.hg38.MDS42.sam
+
+# sort and generate BAM file
+Software/samtools-1.16.1/samtools sort -@ 4 -m 2G CFTR_v02/Data/SAM/BACs.hg38.MDS42.sam -o CFTR_v02/Data/BAM/BACs.hg38.MDS42.bam
+
+# index BAM file
+Software/samtools-1.16.1/samtools index CFTR_v02/Data/BAM/BACs.hg38.MDS42.bam
+
+# count number of reads
+Software/samtools-1.16.1/samtools view -c CFTR_v02/Data/BAM/BACs.hg38.MDS42.bam
+# 20,331,134 reads
+
+# remove reads with multiple alignments
+Software/samtools-1.16.1/samtools view -h CFTR_v02/Data/BAM/BACs.hg38.MDS42.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | Software/samtools-1.16.1/samtools view -b > CFTR_v02/Data/BAM/BACs.hg38.MDS42.unique.bam
+
+# select properly paired reads
+Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b CFTR_v02/Data/BAM/BACs.hg38.MDS42.unique.bam > CFTR_v02/Data/BAM/BACs.hg38.MDS42.paired.bam
+
+# count number of reads
+Software/samtools-1.16.1/samtools view -c CFTR_v02/Data/BAM/BACs.hg38.MDS42.paired.bam
+# 15,520,500 reads
+
+# Dump bacterial chromosomes
+# Create an index file
+awk '/^[0-9]*\t/ {printf("%s\t0\t%s\n",$1,$2);}' Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa.fai > CFTR_v02/Data/BAM/hum.index.bed
+
+# filter only human chromosomes
+Software/samtools-1.16.1/samtools view -L CFTR_v02/Data/BAM/hum.index.bed -o CFTR_v02/Data/BAM/BACs.only.hum.bam CFTR_v02/Data/BAM/BACs.hg38.MDS42.paired.bam
+
+# Compute coverage using deeptool bam coverage
+Software/miniconda3/envs/deeptools/bin/bamCoverage --bam CFTR_v02/Data/BAM/BACs.only.hum.bam -o CFTR_v02/Data/BW/BACs.only.hum.50nt.bw -of bigwig --binSize 50 --normalizeUsing CPM
+```
+
+
+## Base quality score recalibration (BCSR)
+In order to call variants confidently, we need to recalibrate the base quality scores using an established pipeline available from GATK. Candidate “germline” short variants are then filtered by Variant Quality Score Recalibration (VQSR).
+
+```{bash, eval = F}
+# Mark duplicates and sort BAM
+Software/gatk-4.3.0.0/gatk MarkDuplicates -I CFTR_v02/Data/BAM/BACs.only.hum.bam -O CFTR_v02/Data/BAMdup/BACs.only.hum.dup.bam -M CFTR_v02/Data/BAMdup/BACs.dup.metrics.txt
+
+Software/gatk-4.3.0.0/gatk SortSam -I CFTR_v02/Data/BAMdup/BACs.only.hum.dup.bam -O CFTR_v02/Data/BAMdup/BACs.only.hum.dup.sort.bam -SO coordinate
+
+# Add read groups (needed for picard/BQSR)
+Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups -I CFTR_v02/Data/BAMdup/BACs.only.hum.dup.sort.bam -O CFTR_v02/Data/BAMdup/BACs.only.hum.dup.sort.group.bam -LB BAC_library -PL ILLUMINA -PU unknown -SM Normal
+
+# Base quality score recalibration (BQSR)
+# Generate recalibration table for BQSR
+Software/gatk-4.3.0.0/gatk BaseRecalibrator -I CFTR_v02/Data/BAMdup/BACs.only.hum.dup.sort.group.bam -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa --known-sites ./ChromTrans/Dataset/GATK_resource/BQSR.known.sites.hg38.recode.sort.vcf -O CFTR_v02/Data/BQSR/BACs.only.hum.recal.data.table
+
+# Apply BQSR
+Software/gatk-4.3.0.0/gatk ApplyBQSR -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -I CFTR_v02/Data/BAMdup/BACs.only.hum.dup.sort.group.bam --bqsr-recal-file CFTR_v02/Data/BQSR/BACs.only.hum.recal.data.table -O CFTR_v02/Data/BQSR/BACs.only.hum.bqsr.bam
+
+Software/samtools-1.16.1/samtools index CFTR_v02/Data/BQSR/BACs.only.hum.bqsr.bam
+
+```
+
+## Define haplotype
+Identify germline mutations with HaplotypeCaller and filtered using Variant Quality Score Recalibration (VQSR). VQSR uses an adaptive error model trained on “true sites” provided as input, typically HapMap and Omni 2.5M SNP chip array sites. Input are available from the GATK Resource Bundle, https://console.cloud.google.com/storage/browser/genomics-public-data/resources/broad/hg38/v0/ but need to be reformated to be used with Ensembl genomes.
+
+```{bash, eval = F}
+# Call variants
+Software/gatk-4.3.0.0/gatk HaplotypeCaller -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -I CFTR_v02/Data/BQSR/BACs.only.hum.bqsr.bam -O CFTR_v02/Data/VCF/HAPLO/BACs.haplotype.vcf
+
+# Build a recalibration model with VariantRecalibrator
+Software/gatk-4.3.0.0/gatk VariantRecalibrator -R ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -V CFTR_v02/Data/VCF/HAPLO/BACs.haplotype.vcf -AS --resource:hapmap,known=false,training=true,truth=true,prior=15.0 ./ChromTrans/Dataset/GATK_resource/hapmap_3.3.hg38.sites.recode.sort.vcf --resource:omni,known=false,training=true,truth=true,prior=12.0 ./ChromTrans/Dataset/GATK_resource/1000G_omni2.5.hg38.recode.sort.vcf --resource:1000G,known=false,training=true,truth=false,prior=10.0 ./ChromTrans/Dataset/GATK_resource/1000G_phase1.snps.high_confidence.hg38.recode.sort.vcf --resource:dbsnp,known=true,training=false,truth=false,prior=2.0 ./ChromTrans/Dataset/GATK_resource/Homo_sapiens_assembly38.dbsnp138.recode.sort.vcf -an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -mode SNP --max-gaussians 4 -O CFTR_v02/Data/VCF/HAPLO/BACs.output.AS.recal --tranches-file CFTR_v02/Data/VCF/HAPLO/BACs.output.AS.tranches --rscript-file CFTR_v02/Data/VCF/HAPLO/BACs.output.plots.AS.R
+
+# Apply recalibration
+Software/gatk-4.3.0.0/gatk ApplyVQSR -R ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -V CFTR_v02/Data/VCF/HAPLO/BACs.haplotype.vcf -O CFTR_v02/Data/VCF/HAPLO/BACs.haplotype.VQSR.vcf -AS --truth-sensitivity-filter-level 99.0 --tranches-file CFTR_v02/Data/VCF/HAPLO/BACs.output.AS.tranches --recal-file CFTR_v02/Data/VCF/HAPLO/BACs.output.AS.recal -mode SNP
+
+```
+
+## Generate an alternative reference sequence
+The previous identify germline variants are used to generate an alternative reference genome (FastaAlternateReferenceMaker). We first select variants on the regions covered by the BACs. To do so we look at region of chr7 with sufficient coverage to support domains covered by BACs.
+
+```{R, eval = F}
+library(rtracklayer)
+BAC.cov.gr <- import.bw("./CFTR_v02/Data/BW/BACs.only.hum.50nt.bw")
+BAC.cov.chr7.gr <- BAC.cov.gr[seqnames(BAC.cov.gr) == "7"]
+
+# Identify domains with more than 10 CPM per 50 nt and add an extra 10 kb both side
+BAC.domain.start <- min(as.data.frame(BAC.cov.chr7.gr[BAC.cov.chr7.gr$score >= 10])$start) - 10000
+BAC.domain.end <- max(as.data.frame(BAC.cov.chr7.gr[BAC.cov.chr7.gr$score >= 10])$end) + 10000 
+
+```
+
+Replace the reference bases at variation sites for the interval covered by the BAC library
+WARNING: FastaAlternateReferenceMaker alters the name of the chromosomes, so we need to swap the contigs name
+
+```{bash, eval = F}
+# alternative reference maker with full genome
+# alternative reference maker gave error since it is missing a fa.dict file
+
+# made dict file using Picard and CreateSequenceDictionary
+Software/gatk-4.3.0.0/gatk CreateSequenceDictionary -R CFTR_v02/Genomes/hg38.MDS42.fa -O CFTR_v02/Genomes/hg38.MDS42.fa.dict
+
+# need to rename the dict file such that it does not end on .fa.dict but just on .dict
+# this was liukely changed manually in the first instance already
+
+# rerun alternate reference maker
+Software/gatk-4.3.0.0/gatk FastaAlternateReferenceMaker -R CFTR_v02/Genomes/hg38.MDS42.fa -O CFTR_v02/Genomes/hg38.MDS42.alternate.BAC.fa -V CFTR_v02/Data/VCF/HAPLO/BACs.haplotype.VQSR.vcf
+
+grep "^>" CFTR_v02/Genomes/hg38.MDS42.alternate.BAC.fa > CFTR_v02/Sequences/contig_names/hg38.MDS42.alternate.seqname.txt
+
+```
+
+Rename fasta headers using a lookup table with seqkit (https://bioinf.shenwei.me/seqkit/)
+
+```{bash, eval = F}
+# installed seqkit via conda
+Software/miniconda3/bin/conda install -c bioconda seqkit
+
+sed '/^>/ s/ .*//' CFTR_v02/Genomes/hg38.MDS42.alternate.BAC.fa > CFTR_v02/Genomes/temp.fa
+grep "^>" CFTR_v02/Genomes/temp.fa > CFTR_v02/Sequences/contig_names/temp.seqname.txt
+
+```
+
+
+```{R, eval = F}
+old.name <- read.table("./CFTR_v02/Sequences/contig_names/temp.seqname.txt", sep = ",")
+new.name <- read.table("./CFTR_v02/Sequences/contig_names/hg38.MDS42.seqname.txt", sep = ",")
+
+corr.df <- cbind.data.frame(gsub(">", "", old.name$V1), gsub(">", "", new.name$V1))
+write.table(corr.df, "./CFTR_v02/Sequences/contig_names/corr.table",
+            sep = "\t", quote = F, col.names = F, row.names = F)
+```
+
+```{bash, eval = F}
+# Use seqkit to replace the correct names
+Software/miniconda3/bin/seqkit replace -p '([0-9]+)' -r '{kv}$2' -k CFTR_v02/Sequences/contig_names/corr.table CFTR_v02/Genomes/temp.fa > CFTR_v02/Genomes/hg38.MDS42.alternate.fa
+
+grep "^>" CFTR_v02/Genomes/hg38.MDS42.alternate.fa > CFTR_v02/Sequences/contig_names/hg38.MDS42.alternate.seqname.txt
+
+# Skipped removal of temporary files
+
+# Index alternate genome
+Software/bwa/bwa index CFTR_v02/Genomes/hg38.MDS42.alternate.fa
+
+```
+
+
+# Somatic variant calling
+## Align BACs and BASIS samples to alternate chromosome
+
+```{bash, eval = F}
+
+# pool of BACs
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_BACs/BACs.r1.fq.gz CFTR_v02/Data/fastq_BACs/BACs.r2.fq.gz > CFTR_v02/Data/SAM/BACs.hg38.MDS42.alternate.sam
+
+# individual BACs
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_BACs/BAC01/11A11_S11_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC01/11A11_S11_R2_001.fastq.gz > CFTR_v02/Data/SAM/BAC01.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_BACs/BAC02/12A12_S12_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC02/12A12_S12_R2_001.fastq.gz > CFTR_v02/Data/SAM/BAC02.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_BACs/BAC03/13A13_S13_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC03/13A13_S13_R2_001.fastq.gz > CFTR_v02/Data/SAM/BAC03.hg38.MDS42.alternate.sam
+
+# CFTR samples
+# intermediate step
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_CFTR_intermediate/14A14_S14_R1_001.fastq.gz CFTR_v02/Data/fastq_CFTR_intermediate/14A14_S14_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTRintermediate.hg38.MDS42.alternate.sam
+
+# final step
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.fa CFTR_v02/Data/fastq_CFTR_cl3/6A6_S6_R1_001.fastq.gz CFTR_v02/Data/fastq_CFTR_cl3/6A6_S6_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTRfinal.hg38.MDS42.alternate.sam
+
+```
+
+## Process all aligned data
+Data are then processed as previously using /BASIS/Scripts/Read_processing_SLURM.sh script. Shell script is reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./CFTR_v02/Data/SAM/*.hg38.MDS42.alternate.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Sort and generate BAM file
+./Software/samtools-1.16.1/samtools sort -@ 4 -m 2G ./CFTR_v02/Data/SAM/$SAMPLE.hg38.MDS42.alternate.sam -o ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam
+
+# Index BAM file
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam
+
+# Generate stats
+./Software/samtools-1.16.1/samtools idxstats ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam > ./CFTR_v02/Data/IDXSTATS/$SAMPLE.hg38.MDS42.alternate.idxstats.txt
+
+# Remove reads with multiple alignments
+./Software/samtools-1.16.1/samtools view -h ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | ./Software/samtools-1.16.1/samtools view -b > ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.unique.bam
+
+# Select properly paired reads
+./Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.unique.bam > ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam
+
+# Recompute stats
+./Software/samtools-1.16.1/samtools idxstats ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam > ./CFTR_v02/Data/IDXSTATS/$SAMPLE.hg38.MDS42.alternate.paired.idxstats.txt
+
+# Dump bacterial chromosomes
+./Software/samtools-1.16.1/samtools view -L ./CFTR_v02/Data/BAM/hum.index.bed \
+                                                          -o ./CFTR_v02/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+                                                             ./CFTR_v02/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam 
+
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/$SAMPLE.alternate.only.hum.bam
+
+# Compute coverage using deeptool bam coverage
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./CFTR_v02/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+      -o    ./CFTR_v02/Data/BW/$SAMPLE.alternate.only.hum.50nt.bw \
+      -of bigwig \
+      --binSize 50 \
+      --normalizeUsing CPM
+
+done
+```
+
+To extract a specific region from a fasta file, samtools faidx can be used. Here used to extract the target CFTR region to understand whether the sequences substantially differ.
+
+```{bash, eval = F}
+Software/samtools-1.16.1/samtools faidx CFTR_v02/Genomes/hg38.MDS42.alternate.fa 7:117450000-117700000 > CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa
+Software/samtools-1.16.1/samtools faidx CFTR_v02/Genomes/hg38.MDS42.fa 7:117450000-117700000 > CFTR_v02/Genomes/hg38.MDS42.chr7_CFTR.fa
+
+
+```
+
+## Mark duplicates and group reads
+Data are then processed as previously using the ./BASIS/Scripts/Picard_mark_SLURM.sh script. Shell script is reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for BAM in ./CFTR_v02/Data/BAM/*.alternate.only.hum.bam
+do
+# Recover file names
+FILE=${BAM%.alternate.only.hum.bam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Mark duplicates and sort BAM
+./Software/gatk-4.3.0.0/gatk MarkDuplicates \
+    -I ./CFTR_v02/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+    -O ./CFTR_v02/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -M ./CFTR_v02/Data/BAMdup/$SAMPLE.dup.metrics.txt
+./Software/gatk-4.3.0.0/gatk SortSam \
+    -I ./CFTR_v02/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -O ./CFTR_v02/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -SO coordinate
+# Add read groups (needed for Mutect2)
+./Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups \
+    -I ./CFTR_v02/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -O ./CFTR_v02/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -LB $SAMPLE \
+    -PL ILLUMINA \
+    -PU unknown \
+    -SM $SAMPLE
+done
+```
+
+## Candidate short variants calling
+Candidate short variants are called with Mutect2 with the tumor (= CFTR samples) with matched normal (= BACs).
+
+```{bash, eval = F}
+# Create a sequence dictionary file for the alternative genome
+Software/gatk-4.3.0.0/gatk CreateSequenceDictionary -R ./CFTR_v02/Genomes/hg38.MDS42.alternate.fa
+
+# Check read group information
+Software/samtools-1.16.1/samtools view -H ./CFTR_v02/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam | grep '^@RG'
+# @RG	ID:1	LB:BACs	PL:ILLUMINA	SM:BACs	PU:unknown
+
+Software/samtools-1.16.1/samtools view -H ./CFTR_v02/Data/BAMdup/CFTRfinal.alternate.only.hum.dup.sort.group.bam | grep '^@RG'
+# @RG	ID:1	LB:CFTRfinal	PL:ILLUMINA	SM:CFTRfinal	PU:unknown
+
+# Index BAM files
+Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam 
+Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAMdup/CFTRintermediate.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAMdup/CFTRfinal.alternate.only.hum.dup.sort.group.bam
+
+# Run Mutect2 (Tumor with matched normal mode)
+# CFTR samples intermediate and final assembly
+Software/gatk-4.3.0.0/gatk Mutect2 -R ./CFTR_v02/Genomes/hg38.MDS42.alternate.fa -I ./CFTR_v02/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam -I ./CFTR_v02/Data/BAMdup/CFTRintermediate.alternate.only.hum.dup.sort.group.bam -normal BACs -O ./CFTR_v02/Data/VCF/SOMA/CFTRintermediate.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 -R ./CFTR_v02/Genomes/hg38.MDS42.alternate.fa -I ./CFTR_v02/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam -I ./CFTR_v02/Data/BAMdup/CFTRfinal.alternate.only.hum.dup.sort.group.bam -normal BACs -O ./CFTR_v02/Data/VCF/SOMA/CFTRfinal.mutect2.vcf
+
+```
+
+## Filter short variants
+Candidate short variants are then filtered using the shell script /BASIS/Scripts/Mutect_filter_SLURM.sh and /BASIS/Scripts/Mutect_filter_SLURM.2.sh, reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for VCF in ./CFTR_v02/Data/VCF/SOMA/*.mutect2.vcf
+do
+# Recover file names
+FILE=${VCF%.mutect2.vcf}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Filter Mutect2 VCF
+./Software/gatk-4.3.0.0/gatk FilterMutectCalls \
+   -V ./CFTR_v02/Data/VCF/SOMA/$SAMPLE.mutect2.vcf \
+   -R ./CFTR_v02/Genomes/hg38.MDS42.alternate.fa \
+   -O ./CFTR_v02/Data/VCF/SOMA/$SAMPLE.mutect2.filter.vcf
+# Generate table from VCF
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+     -V ./CFTR_v02/Data/VCF/SOMA/$SAMPLE.mutect2.filter.vcf \
+     -F CHROM -F POS -F REF -F ALT -F FILTER -GF AF -GF GT \
+     -O ./CFTR_v02/Data/VCF/SOMA/$SAMPLE.mutect2.filter.tsv
+done
+```
+
+## Mutation analysis / curation
+
+```{R, eval = F}
+#R
+library(dplyr)
+# Load all detected somatic mutations
+BASIS.files <- list.files(path = "./CFTR_v02/Data/VCF/SOMA", pattern = "\\.mutect2.filter.tsv")
+BASIS.samples <- gsub(".mutect2.filter.tsv", "", BASIS.files)
+BASIS.path <- paste("./CFTR_v02/Data/VCF/SOMA", BASIS.files, sep = "/")
+BASIS.vcf <- tibble()
+for (i in 1:length(BASIS.path)) {
+  print(BASIS.samples[i])
+  vcf.i <- read.table(BASIS.path[i], header = T) %>% mutate(SAMPLE = BASIS.samples[i])
+  colnames(vcf.i) <- c("CHROM", "POS", "REF", "ALT", "FILTER", "BAC.AF", "BAC.GT", "BASIS.AF", "BASIS.GT", "SAMPLE")
+  BASIS.vcf <- rbind(BASIS.vcf, vcf.i)
+}
+BASIS.vcf <- BASIS.vcf %>% filter(CHROM == 7 & POS >= 117465000 & POS <= 117680000)
+BASIS.ligth.vcf <- BASIS.vcf %>% filter(BASIS.AF >= 0.25) %>% dplyr::select(CHROM, POS, REF, ALT) %>% unique() %>% filter(REF != "TRUE")
+BASIS.true.vcf <- BASIS.vcf %>% filter(POS %in% BASIS.ligth.vcf$POS) %>% arrange(POS)
+# Save vcf summary
+write.csv(BASIS.true.vcf, "./CFTR_v02/Data/VCF/SOMA.summary.csv")
+# The resulting file is manually modified to report additional information
+```
+
+No mutations detected after running pipeline.
+
+# Final verification and alignment of CFTR BACs for data visualisation
+
+```{bash, eval = F}
+
+# index genome
+Software/bwa/bwa index ./CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa
+Software/samtools-1.16.1/samtools faidx ./CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa
+
+# pool of BACs
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_BACs/BACs.r1.fq.gz CFTR_v02/Data/fastq_BACs/BACs.r2.fq.gz > CFTR_v02/Data/SAM/CFTR_only/BACs.hg38.MDS42.alternate.chr7_CFTR.sam
+
+# individual BACs
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_BACs/BAC01/11A11_S11_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC01/11A11_S11_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTR_only/BAC01.hg38.MDS42.alternate.chr7_CFTR.sam
+
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_BACs/BAC02/12A12_S12_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC02/12A12_S12_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTR_only/BAC02.hg38.MDS42.alternate.chr7_CFTR.sam
+
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_BACs/BAC03/13A13_S13_R1_001.fastq.gz CFTR_v02/Data/fastq_BACs/BAC03/13A13_S13_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTR_only/BAC03.hg38.MDS42.alternate.chr7_CFTR.sam
+
+# CFTR samples
+# intermediate step
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_CFTR_intermediate/14A14_S14_R1_001.fastq.gz CFTR_v02/Data/fastq_CFTR_intermediate/14A14_S14_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTR_only/CFTRintermediate.hg38.MDS42.alternate.chr7_CFTR.sam
+
+# final step
+Software/bwa/bwa mem -M -t 7 CFTR_v02/Genomes/hg38.MDS42.alternate.chr7_CFTR.fa CFTR_v02/Data/fastq_CFTR_cl3/6A6_S6_R1_001.fastq.gz CFTR_v02/Data/fastq_CFTR_cl3/6A6_S6_R2_001.fastq.gz > CFTR_v02/Data/SAM/CFTR_only/CFTRfinal.hg38.MDS42.alternate.chr7_CFTR.sam
+
+```
+
+Process reads with similar script as done earlier.
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./CFTR_v02/Data/SAM/CFTR_only/*.hg38.MDS42.alternate.chr7_CFTR.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.chr7_CFTR.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Sort and generate BAM file
+./Software/samtools-1.16.1/samtools sort -@ 4 -m 2G ./CFTR_v02/Data/SAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.sam -o ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.bam
+
+# Index BAM file
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.bam
+
+# Generate stats
+./Software/samtools-1.16.1/samtools idxstats ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.bam > ./CFTR_v02/Data/IDXSTATS/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.idxstats.txt
+
+# Remove reads with multiple alignments
+./Software/samtools-1.16.1/samtools view -h ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | ./Software/samtools-1.16.1/samtools view -b > ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.unique.bam
+
+# Select properly paired reads
+./Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.unique.bam > ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.paired.bam
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.paired.bam
+
+# Recompute stats
+./Software/samtools-1.16.1/samtools idxstats ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.paired.bam > ./CFTR_v02/Data/IDXSTATS/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.paired.idxstats.txt
+
+# Dump bacterial chromosomes
+./Software/samtools-1.16.1/samtools view -L ./CFTR_v02/Data/BAM/CFTR_only/hum.index.bed \
+                                                          -o ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.alternate.chr7_CFTR.only.hum.bam \
+                                                             ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.hg38.MDS42.alternate.chr7_CFTR.paired.bam 
+
+./Software/samtools-1.16.1/samtools index ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.alternate.chr7_CFTR.only.hum.bam
+
+# Compute coverage using deeptool bam coverage
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./CFTR_v02/Data/BAM/CFTR_only/$SAMPLE.alternate.chr7_CFTR.only.hum.bam \
+      -o    ./CFTR_v02/Data/BW/CFTR_only/$SAMPLE.alternate.chr7_CFTR.only.hum.50nt.bw \
+      -of bigwig \
+      --binSize 50 \
+      --normalizeUsing CPM
+
+done
+```
+
+
+
+

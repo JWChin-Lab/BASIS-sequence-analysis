@@ -1,0 +1,904 @@
+---
+title: "Analysis for final 1.1 Mb BASIS assembly"
+author: "Pierre Murat, Askar Kleefeldt"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+
+---
+
+# Prepare and index genomes
+Human and bacterial genomes are catenated to generate a chimeric genomes used for alignment.
+
+Human genome: Ensembl hg38/GRCh38
+E. Coli: MDS42
+Helper vectors: pKW20 and pLF118
+
+```{bash, eval = F}
+srun -c 112 --pty bash
+# Extract contigs names
+grep "^>" ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa > ./BASIS/Sequences/contig_names/hg38.seqname.txt
+grep "^>" ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa > ./BASIS/Sequences/contig_names/MDS42.seqname.txt
+grep "^>" ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa > ./BASIS/Sequences/contig_names/p20.seqname.txt
+grep "^>" ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa > ./BASIS/Sequences/contig_names/pLF118.seqname.txt
+
+# Manually modify headers of bacterial fa files / re-run
+# Join genomes and indexes
+cat ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+    ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa \
+    ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa \
+    ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa \
+    > ./BASIS/Genomes/hg38.MDS42.fa
+grep "^>" ./BASIS/Genomes/hg38.MDS42.fa > ./BASIS/Sequences/contig_names/hg38.MDS42.seqname.txt
+
+./Software/bwa/bwa index ./BASIS/Genomes/hg38.MDS42.fa
+samtools faidx ./BASIS/Genomes/hg38.MDS42.fa
+./Software/gatk-4.2.5.0/gatk CreateSequenceDictionary -R ./BASIS/Genomes/hg38.MDS42.fa
+```
+
+# Create a reference haplotype
+## Read alignment
+All input adapted human BAC library BACs are aligned to the chimeric reference genome.
+
+```{bash, eval = F}
+srun -c 112 --pty bash
+# Extract contigs names
+grep "^>" ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa > ./BASIS/Sequences/contig_names/hg38.seqname.txt
+grep "^>" ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa > ./BASIS/Sequences/contig_names/MDS42.seqname.txt
+grep "^>" ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa > ./BASIS/Sequences/contig_names/p20.seqname.txt
+grep "^>" ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa > ./BASIS/Sequences/contig_names/pLF118.seqname.txt
+
+# Manually modify headers of bacterial fa files / re-run
+# Join genomes and indexes
+cat ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+    ./BASIS/Sequences/MDS42_WT_old_seq_better_annotation.fa \
+    ./BASIS/Sequences/p20_helper-plasmid_BASIS.fa \
+    ./BASIS/Sequences/pLF118_helper_plasmid_BACs.fa \
+    > ./BASIS/Genomes/hg38.MDS42.fa
+grep "^>" ./BASIS/Genomes/hg38.MDS42.fa > ./BASIS/Sequences/contig_names/hg38.MDS42.seqname.txt
+
+./Software/bwa/bwa index ./BASIS/Genomes/hg38.MDS42.fa
+samtools faidx ./BASIS/Genomes/hg38.MDS42.fa
+./Software/gatk-4.2.5.0/gatk CreateSequenceDictionary -R ./BASIS/Genomes/hg38.MDS42.fa
+
+# Join FASTQ files
+cat ./BASIS_v03/Data/fastq_BACs/BAC266_pH/9A9_S9_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC267_rK/10A10_S10_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC269_pH/11A11_S11_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC270_rK/12A12_S12_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC271_pH/13A13_S13_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC272_rK/14A14_S14_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC273_pH/15A15_S15_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC274_rK/2A2_S2_R1_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC275_pH/86A86_S86_R1_001.fastq.gz \
+    > ./BASIS_v03/Data/fastq_BACs/BACs.r1.fq.gz
+    
+cat ./BASIS_v03/Data/fastq_BACs/BAC266_pH/9A9_S9_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC267_rK/10A10_S10_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC269_pH/11A11_S11_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC270_rK/12A12_S12_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC271_pH/13A13_S13_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC272_rK/14A14_S14_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC273_pH/15A15_S15_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC274_rK/2A2_S2_R2_001.fastq.gz \
+    ./BASIS_v03/Data/fastq_BACs/BAC275_pH/86A86_S86_R2_001.fastq.gz \
+    > ./BASIS_v03/Data/fastq_BACs/BACs.r2.fq.gz
+
+# Count number of reads
+zcat ./BASIS_v03/Data/fastq_BACs/BACs.r1.fq.gz | echo $((`wc -l`/4)) # 31,142,010 reads
+zcat ./BASIS_v03/Data/fastq_BACs/BACs.r2.fq.gz | echo $((`wc -l`/4)) # 31,142,010 reads
+# All libraries are well balanced
+
+# align concatenated BAC fastq files to chimeric genome
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.fa BASIS_v03/Data/fastq_BACs/BACs.r1.fq.gz BASIS_v03/Data/fastq_BACs/BACs.r2.fq.gz > BASIS_v03/Data/SAM/BACs.hg38.MDS42.sam
+
+# sort and generate BAM file
+Software/samtools-1.16.1/samtools sort -@ 4 -m 2G BASIS_v03/Data/SAM/BACs.hg38.MDS42.sam -o BASIS_v03/Data/BAM/BACs.hg38.MDS42.bam
+
+# index BAM file
+Software/samtools-1.16.1/samtools index BASIS_v03/Data/BAM/BACs.hg38.MDS42.bam
+
+# count number of reads
+Software/samtools-1.16.1/samtools view -c BASIS_v03/Data/BAM/BACs.hg38.MDS42.bam
+# 62,737,268
+
+# remove reads with multiple alignments
+Software/samtools-1.16.1/samtools view -h BASIS_v03/Data/BAM/BACs.hg38.MDS42.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | Software/samtools-1.16.1/samtools view -b > BASIS_v03/Data/BAM/BACs.hg38.MDS42.unique.bam
+
+# select properly paired reads
+Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b BASIS_v03/Data/BAM/BACs.hg38.MDS42.unique.bam > BASIS_v03/Data/BAM/BACs.hg38.MDS42.paired.bam
+
+# count number of reads
+Software/samtools-1.16.1/samtools view -c BASIS_v03/Data/BAM/BACs.hg38.MDS42.paired.bam
+# 51,283,822 reads
+
+# Dump bacterial chromosomes
+# Create an index file
+awk '/^[0-9]*\t/ {printf("%s\t0\t%s\n",$1,$2);}' Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa.fai > BASIS_v03/Data/BAM/hum.index.bed
+
+# filter only human chromosomes
+Software/samtools-1.16.1/samtools view -L BASIS_v03/Data/BAM/hum.index.bed -o BASIS_v03/Data/BAM/BACs.only.hum.bam BASIS_v03/Data/BAM/BACs.hg38.MDS42.paired.bam
+
+# index BACs.only.human.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/BACs.only.hum.bam
+
+# Compute coverage using deeptool bam coverage
+Software/miniconda3/envs/deeptools/bin/bamCoverage --bam BASIS_v03/Data/BAM/BACs.only.hum.bam -o BASIS_v03/Data/BW/BACs.only.hum.50nt.bw -of bigwig --binSize 50 --normalizeUsing CPM
+```
+
+## Base quality score recalibration (BCSR)
+In order to call variants confidently, we need to recalibrate the base quality scores using an established pipeline available from GATK. Candidate “germline” short variants are then filtered by Variant Quality Score Recalibration (VQSR).
+
+```{bash, eval = F}
+# Mark duplicates and sort BAM
+Software/gatk-4.3.0.0/gatk MarkDuplicates -I BASIS_v03/Data/BAM/BACs.only.hum.bam -O BASIS_v03/Data/BAMdup/BACs.only.hum.dup.bam -M BASIS_v03/Data/BAMdup/BACs.dup.metrics.txt
+
+Software/gatk-4.3.0.0/gatk SortSam -I BASIS_v03/Data/BAMdup/BACs.only.hum.dup.bam -O BASIS_v03/Data/BAMdup/BACs.only.hum.dup.sort.bam -SO coordinate
+
+# Add read groups (needed for picard/BQSR)
+Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups -I BASIS_v03/Data/BAMdup/BACs.only.hum.dup.sort.bam -O BASIS_v03/Data/BAMdup/BACs.only.hum.dup.sort.group.bam -LB BAC_library -PL ILLUMINA -PU unknown -SM Normal
+
+# Base quality score recalibration (BQSR)
+# Generate recalibration table for BQSR
+Software/gatk-4.3.0.0/gatk BaseRecalibrator -I BASIS_v03/Data/BAMdup/BACs.only.hum.dup.sort.group.bam -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa --known-sites ./ChromTrans/Dataset/GATK_resource/BQSR.known.sites.hg38.recode.sort.vcf -O BASIS_v03/Data/BQSR/BACs.only.hum.recal.data.table
+
+# Apply BQSR
+Software/gatk-4.3.0.0/gatk ApplyBQSR -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -I BASIS_v03/Data/BAMdup/BACs.only.hum.dup.sort.group.bam --bqsr-recal-file BASIS_v03/Data/BQSR/BACs.only.hum.recal.data.table -O BASIS_v03/Data/BQSR/BACs.only.hum.bqsr.bam
+
+Software/samtools-1.16.1/samtools index BASIS_v03/Data/BQSR/BACs.only.hum.bqsr.bam
+
+```
+
+## Define haplotype
+Identify germline mutations with HaplotypeCaller and filtered using Variant Quality Score Recalibration (VQSR). VQSR uses an adaptive error model trained on “true sites” provided as input, typically HapMap and Omni 2.5M SNP chip array sites. Input are available from the GATK Resource Bundle, https://console.cloud.google.com/storage/browser/genomics-public-data/resources/broad/hg38/v0/ but need to be reformated to be used with Ensembl genomes.
+
+```{bash, eval = F}
+# Call variants
+Software/gatk-4.3.0.0/gatk HaplotypeCaller \
+    -R Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+    -I BASIS_v03/Data/BQSR/BACs.only.hum.bqsr.bam \
+    -O BASIS_v03/Data/VCF/HAPLO/BACs.haplotype.vcf
+
+# Build a recalibration model with VariantRecalibrator
+Software/gatk-4.3.0.0/gatk VariantRecalibrator -R ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -V BASIS_v03/Data/VCF/HAPLO/BACs.haplotype.vcf -AS --resource:hapmap,known=false,training=true,truth=true,prior=15.0 ./ChromTrans/Dataset/GATK_resource/hapmap_3.3.hg38.sites.recode.sort.vcf --resource:omni,known=false,training=true,truth=true,prior=12.0 ./ChromTrans/Dataset/GATK_resource/1000G_omni2.5.hg38.recode.sort.vcf --resource:1000G,known=false,training=true,truth=false,prior=10.0 ./ChromTrans/Dataset/GATK_resource/1000G_phase1.snps.high_confidence.hg38.recode.sort.vcf --resource:dbsnp,known=true,training=false,truth=false,prior=2.0 ./ChromTrans/Dataset/GATK_resource/Homo_sapiens_assembly38.dbsnp138.recode.sort.vcf -an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -mode SNP --max-gaussians 4 -O BASIS_v03/Data/VCF/HAPLO/BACs.output.AS.recal --tranches-file BASIS_v03/Data/VCF/HAPLO/BACs.output.AS.tranches --rscript-file BASIS_v03/Data/VCF/HAPLO/BACs.output.plots.AS.R
+
+# Apply recalibration
+Software/gatk-4.3.0.0/gatk ApplyVQSR -R ./Genomes/hg38/Homo_sapiens.GRCh38.dna.primary_assembly.fa -V BASIS_v03/Data/VCF/HAPLO/BACs.haplotype.vcf -O BASIS_v03/Data/VCF/HAPLO/BACs.haplotype.VQSR.vcf -AS --truth-sensitivity-filter-level 99.0 --tranches-file BASIS_v03/Data/VCF/HAPLO/BACs.output.AS.tranches --recal-file BASIS_v03/Data/VCF/HAPLO/BACs.output.AS.recal -mode SNP
+
+```
+
+## Generate an alternative reference sequence
+The previously identified germline variants are used to generate an alternative reference genome (FastaAlternateReferenceMaker). We first select variants on the regions covered by the BACs. To do so we look at region of chr21 with sufficient coverage to support domains covered by BACs.
+
+```{R, eval = F}
+library(rtracklayer)
+BAC.cov.gr <- import.bw("/Volumes./BASIS_v03/Data/BW/BACs.only.hum.50nt.bw")
+BAC.cov.chr21.gr <- BAC.cov.gr[seqnames(BAC.cov.gr) == "21"]
+
+# Identify domains with more than 10 CPM per 50 nt and add an extra 10 kb on both side
+BAC.domain.start <- min(as.data.frame(BAC.cov.chr21.gr[BAC.cov.chr21.gr$score >= 10])$start) - 10000
+BAC.domain.end <- max(as.data.frame(BAC.cov.chr21.gr[BAC.cov.chr21.gr$score >= 10])$end) + 10000 
+
+```
+
+Replace the reference bases at variation sites for the interval covered by the BAC library.
+WARNING: FastaAlternateReferenceMaker alters the name of the chromosomes, so we need to swap the contigs name.
+
+
+```{bash, eval = F}
+# make dict file using Picard and CreateSequenceDictionary
+Software/gatk-4.3.0.0/gatk CreateSequenceDictionary -R BASIS_v03/Genomes/hg38.MDS42.fa -O BASIS_v03/Genomes/hg38.MDS42.fa.dict
+
+# need to rename the dict file such that it does not end on .fa.dict but just on .dict
+
+# rerun alternate reference maker
+Software/gatk-4.3.0.0/gatk FastaAlternateReferenceMaker -R BASIS_v03/Genomes/hg38.MDS42.fa -O BASIS_v03/Genomes/hg38.MDS42.alternate.BAC.fa -V BASIS_v03/Data/VCF/HAPLO/BACs.haplotype.VQSR.vcf
+
+grep "^>" BASIS_v03/Genomes/hg38.MDS42.alternate.BAC.fa > BASIS_v03/Sequences/contig_names/hg38.MDS42.alternate.seqname.txt
+
+# rename fasta headers using a lookup table with seqkit (https://bioinf.shenwei.me/seqkit/)
+sed '/^>/ s/ .*//' BASIS_v03/Genomes/hg38.MDS42.alternate.BAC.fa > BASIS_v03/Genomes/temp.fa
+grep "^>" BASIS_v03/Genomes/temp.fa > BASIS_v03/Sequences/contig_names/temp.seqname.txt
+
+```
+
+```{R, eval = F}
+# rename fasta headers using a lookup table with seqkit (https://bioinf.shenwei.me/seqkit/)
+old.name <- read.table("/Volumes./BASIS_v03/Sequences/contig_names/temp.seqname.txt", sep = ",")
+new.name <- read.table("/Volumes./BASIS_v03/Sequences/contig_names/hg38.MDS42.seqname.txt", sep = ",")
+
+corr.df <- cbind.data.frame(gsub(">", "", old.name$V1), gsub(">", "", new.name$V1))
+write.table(corr.df, "/Volumes./BASIS_v03/Sequences/contig_names/corr.table",
+            sep = "\t", quote = F, col.names = F, row.names = F)
+```
+
+```{bash, eval = F}
+# Use seqkit to replace the correct names
+Software/miniconda3/bin/seqkit replace -p '([0-9]+)' -r '{kv}$2' -k BASIS_v03/Sequences/contig_names/corr.table BASIS_v03/Genomes/temp.fa > BASIS_v03/Genomes/hg38.MDS42.alternate.fa
+
+grep "^>" BASIS_v03/Genomes/hg38.MDS42.alternate.fa > BASIS_v03/Sequences/contig_names/hg38.MDS42.alternate.seqname.txt
+
+# Index alternate genome
+Software/bwa/bwa index BASIS_v03/Genomes/hg38.MDS42.alternate.fa
+
+```
+
+# Somatic variant calling
+## Align BACs and BASIS samples to alternate chromosome
+
+```{bash, eval = F}
+
+# aligning pool of BACs
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BACs.r1.fq.gz BASIS_v03/Data/fastq_BACs/BACs.r2.fq.gz > BASIS_v03/Data/SAM/BACs.hg38.MDS42.alternate.sam
+
+# aligning individual BACs
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC266_pH/9A9_S9_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC266_pH/9A9_S9_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC266.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC267_rK/10A10_S10_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC267_rK/10A10_S10_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC267.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC269_pH/11A11_S11_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC269_pH/11A11_S11_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC269.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC270_rK/12A12_S12_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC270_rK/12A12_S12_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC270.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC271_pH/13A13_S13_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC271_pH/13A13_S13_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC271.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC272_rK/14A14_S14_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC272_rK/14A14_S14_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC272.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC273_pH/15A15_S15_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC273_pH/15A15_S15_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC273.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC274_rK/2A2_S2_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC274_rK/2A2_S2_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC274.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa BASIS_v03/Data/fastq_BACs/BAC275_pH/86A86_S86_R1_001.fastq.gz BASIS_v03/Data/fastq_BACs/BAC275_pH/86A86_S86_R2_001.fastq.gz > BASIS_v03/Data/SAM/BAC275.hg38.MDS42.alternate.sam
+
+# aligning BASIS samples
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_1_180/SLX-21919.i701_i516.HWJGYBGXL.s_1.r_1.fq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_1_180/SLX-21919.i701_i516.HWJGYBGXL.s_1.r_2.fq.gz \
+> BASIS_v03/Data/SAM/BASIS_1_180.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_2_340/79A79_S79_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_2_340/79A79_S79_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_2_340.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_3_503/52A52_S52_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_3_503/52A52_S52_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_3_503.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_4_570/329D41_S329_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_4_570/329D41_S329_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_4_570.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_5_670/308D20_S308_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_5_670/308D20_S308_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_5_670.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_6_790/300D12_S300_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_6_790/300D12_S300_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_6_790.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_7_910/9A9_S9_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_7_910/9A9_S9_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_7_910.hg38.MDS42.alternate.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+BASIS_v03/Data/fastq_BASIS/BASIS_8_1060_23-8/17A17_S17_R1_001.fastq.gz \
+BASIS_v03/Data/fastq_BASIS/BASIS_8_1060_23-8/17A17_S17_R2_001.fastq.gz \
+> BASIS_v03/Data/SAM/BASIS_8_1060_23-8.hg38.MDS42.alternate.sam
+
+```
+
+## Process all aligned data
+Data are then processed as previously using ./BASIS/Scripts/Read_processing_SLURM.sh script (PM). Shell script is reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./BASIS_v03/Data/SAM/*.hg38.MDS42.alternate.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Sort and generate BAM file
+./Software/samtools-1.16.1/samtools sort -@ 4 -m 2G ./BASIS_v03/Data/SAM/$SAMPLE.hg38.MDS42.alternate.sam -o ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam
+
+# Index BAM file
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam
+
+# Generate stats
+./Software/samtools-1.16.1/samtools idxstats ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam > ./BASIS_v03/Data/IDXSTATS/$SAMPLE.hg38.MDS42.alternate.idxstats.txt
+
+# Remove reads with multiple alignments
+./Software/samtools-1.16.1/samtools view -h ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | ./Software/samtools-1.16.1/samtools view -b > ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.unique.bam
+
+# Select properly paired reads
+./Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.unique.bam > ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam
+
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam
+
+# Recompute stats
+./Software/samtools-1.16.1/samtools idxstats ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam > ./BASIS_v03/Data/IDXSTATS/$SAMPLE.hg38.MDS42.alternate.paired.idxstats.txt
+
+# Dump bacterial chromosomes
+./Software/samtools-1.16.1/samtools view -L ./BASIS_v03/Data/BAM/hum.index.bed \
+                                                          -o ./BASIS_v03/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+                                                             ./BASIS_v03/Data/BAM/$SAMPLE.hg38.MDS42.alternate.paired.bam 
+
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/$SAMPLE.alternate.only.hum.bam
+
+# Compute coverage using deeptool bam coverage
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./BASIS_v03/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+      -o    ./BASIS_v03/Data/BW/$SAMPLE.alternate.only.hum.50nt.bw \
+      -of bigwig \
+      --binSize 50 \
+      --normalizeUsing CPM
+
+done
+```
+
+## Mark duplicates and group reads
+Data are then processed as previously using the ./BASIS/Scripts/Picard_mark_SLURM.sh script. Shell script is reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for BAM in ./BASIS_v03/Data/BAM/*.alternate.only.hum.bam
+do
+# Recover file names
+FILE=${BAM%.alternate.only.hum.bam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Mark duplicates and sort BAM
+./Software/gatk-4.3.0.0/gatk MarkDuplicates \
+    -I ./BASIS_v03/Data/BAM/$SAMPLE.alternate.only.hum.bam \
+    -O ./BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -M ./BASIS_v03/Data/BAMdup/$SAMPLE.dup.metrics.txt
+./Software/gatk-4.3.0.0/gatk SortSam \
+    -I ./BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -O ./BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -SO coordinate
+# Add read groups (needed for Mutect2)
+./Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups \
+    -I ./BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -O ./BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -LB $SAMPLE \
+    -PL ILLUMINA \
+    -PU unknown \
+    -SM $SAMPLE
+done
+```
+
+## Candidate short variants calling
+Candidate short variants are called with Mutect2 with the tumor (= BASIS samples) with matched normal (= BACs).
+
+```{bash, eval = F}
+# Create a sequence dictionary file for the alternative genome
+Software/gatk-4.3.0.0/gatk CreateSequenceDictionary -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa
+
+# Check read group information
+Software/samtools-1.16.1/samtools view -H ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam | grep '^@RG'
+Software/samtools-1.16.1/samtools view -H ./BASIS_v03/Data/BAMdup/BASIS_8_1060_22-D4_newNGS.alternate.only.hum.dup.sort.group.bam | grep '^@RG'
+
+# Index BAM files (of all relevant samples)
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam 
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_1_180.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_2_340.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_3_503.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_4_570.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_5_670.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_6_790.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_7_910.alternate.only.hum.dup.sort.group.bam
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAMdup/BASIS_8_1060_23-8.alternate.only.hum.dup.sort.group.bam
+
+# Run Mutect2 (Tumor with matched normal mode)
+# BASIS samples
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_1_180.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_1_180.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_2_340.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_2_340.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_3_503.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_3_503.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_4_570.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_4_570.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_5_670.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_5_670.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_6_790.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_6_790.mutect2.vcf
+
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_7_910.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_7_910.mutect2.vcf
+  
+Software/gatk-4.3.0.0/gatk Mutect2 \
+  -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+  -I ./BASIS_v03/Data/BAMdup/BACs.alternate.only.hum.dup.sort.group.bam \
+  -I ./BASIS_v03/Data/BAMdup/BASIS_8_1060_23-8.alternate.only.hum.dup.sort.group.bam -normal BACs \
+  -O ./BASIS_v03/Data/VCF/SOMA/BASIS_8_1060_23-8.mutect2.vcf
+
+```
+
+## Filter short variants
+Candidate short variants are then filtered using the shell script ./BASIS/Scripts/Mutect_filter_SLURM.sh and ./BASIS/Scripts/Mutect_filter_SLURM.2.sh, reported below:
+
+```{bash, eval = F}
+#!/bin/bash -l
+for VCF in ./BASIS_v03/Data/VCF/SOMA/*.mutect2.vcf
+do
+# Recover file names
+FILE=${VCF%.mutect2.vcf}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+# Filter Mutect2 VCF
+./Software/gatk-4.3.0.0/gatk FilterMutectCalls \
+   -V ./BASIS_v03/Data/VCF/SOMA/$SAMPLE.mutect2.vcf \
+   -R ./BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+   -O ./BASIS_v03/Data/VCF/SOMA/$SAMPLE.mutect2.filter.vcf
+# Generate table from VCF
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+     -V ./BASIS_v03/Data/VCF/SOMA/$SAMPLE.mutect2.filter.vcf \
+     -F CHROM -F POS -F REF -F ALT -F FILTER -GF AF -GF GT \
+     -O ./BASIS_v03/Data/VCF/SOMA/$SAMPLE.mutect2.filter.tsv
+done
+```
+
+## Mutation analysis / curation
+
+```{R, eval = F}
+#R
+library(dplyr)
+# Load all detected somatic mutations
+BASIS.files <- list.files(path = "/Volumes./BASIS_v03/Data/VCF/SOMA", pattern = "\\.mutect2.filter.tsv")
+BASIS.samples <- gsub(".mutect2.filter.tsv", "", BASIS.files)
+BASIS.path <- paste("/Volumes./BASIS_v03/Data/VCF/SOMA", BASIS.files, sep = "/")
+BASIS.vcf <- tibble()
+for (i in 1:length(BASIS.path)) {
+  print(BASIS.samples[i])
+  vcf.i <- read.table(BASIS.path[i], header = T) %>% mutate(SAMPLE = BASIS.samples[i])
+  colnames(vcf.i) <- c("CHROM", "POS", "REF", "ALT", "FILTER", "BAC.AF", "BAC.GT", "BASIS.AF", "BASIS.GT", "SAMPLE")
+  BASIS.vcf <- rbind(BASIS.vcf, vcf.i)
+}
+BASIS.vcf <- BASIS.vcf %>% filter(CHROM == 21 & POS >= 32545200 & POS <= 33615150)
+BASIS.ligth.vcf <- BASIS.vcf %>% filter(BASIS.AF >= 0.1) %>% dplyr::select(CHROM, POS, REF, ALT) %>% unique() %>% filter(REF != "TRUE")
+BASIS.true.vcf <- BASIS.vcf %>% filter(POS %in% BASIS.ligth.vcf$POS) %>% arrange(POS)
+# Save vcf summary
+write.csv(BASIS.true.vcf, "/Volumes./BASIS_v03/Data/VCF/SOMA.summary.csv")
+# The resulting file is manually modified to report additional information
+```
+
+## Haplotype calling against alternate reference for additional verification
+The alternate reference genome does not implement all SNV/INDELs. Around 200 SNV/INDEL per Mb are retained, requiring manual screening. For additional verification, we perform haplotype calling (germline mutation calling) against alternate fasta reference of both BACs and BASIS samples of interest (1.1 Mb). This yields all variants of the BACs and of BASIS samples with respect to the alternate reference, allowing to compare these two lists against each other to ensure that none of the called variants is missed.
+
+```{bash, eval = F}
+#!/bin/bash -l
+for BAM in ./BASIS_v03/Data/BAM/BACs_alternate_only_hum_bam/*.alternate.only.hum.bam
+do
+# Recover file names
+FILE=${BAM%.alternate.only.hum.bam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+
+# Mark duplicates and sort BAM
+Software/gatk-4.3.0.0/gatk MarkDuplicates \
+    -I BASIS_v03/Data/BAM/BACs_alternate_only_hum_bam/$SAMPLE.alternate.only.hum.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -M BASIS_v03/Data/BAMdup/$SAMPLE.dup.metrics.txt
+
+Software/gatk-4.3.0.0/gatk SortSam \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -SO coordinate
+
+# Add read groups (needed for picard/BQSR)
+Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -LB BACs -PL ILLUMINA -PU unknown -SM Normal
+
+Software/samtools-1.16.1/samtools index BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam
+
+# Call variants (germline variants)
+Software/gatk-4.3.0.0/gatk HaplotypeCaller \
+    -R BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -O BASIS_v03/Data/VCF/HAPLO_alternate/$SAMPLE.alternate.haplotype.vcf
+done
+```
+
+Similarly run for BASIS samples.
+
+```{bash, eval = F}
+#!/bin/bash -l
+for BAM in ./BASIS_v03/Data/BAM/BASIS_alternate_only_hum_bam/*.alternate.only.hum.bam
+do
+# Recover file names
+FILE=${BAM%.alternate.only.hum.bam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+
+# Mark duplicates and sort BAM
+Software/gatk-4.3.0.0/gatk MarkDuplicates \
+    -I BASIS_v03/Data/BAM/BASIS_alternate_only_hum_bam/$SAMPLE.alternate.only.hum.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -M BASIS_v03/Data/BAMdup/$SAMPLE.dup.metrics.txt
+
+Software/gatk-4.3.0.0/gatk SortSam \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -SO coordinate
+
+# Add read groups (needed for picard/BQSR)
+Software/gatk-4.3.0.0/gatk AddOrReplaceReadGroups \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.bam \
+    -O BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -LB BACs -PL ILLUMINA -PU unknown -SM Normal
+
+Software/samtools-1.16.1/samtools index BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam
+
+# Call variants (germline variants)
+Software/gatk-4.3.0.0/gatk HaplotypeCaller \
+    -R BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    -I BASIS_v03/Data/BAMdup/$SAMPLE.alternate.only.hum.dup.sort.group.bam \
+    -O BASIS_v03/Data/VCF/HAPLO_alternate/$SAMPLE.alternate.haplotype.vcf
+    
+# write VCF file to table
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/$SAMPLE.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/$SAMPLE.alternate.haplotype.tsv
+
+done
+```
+
+
+```{bash, eval = F}
+# write VCF file to table
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC266.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC266.alternate.haplotype.tsv
+  
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC267.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC267.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC269.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC269.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC270.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC270.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC271.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC271.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC272.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC272.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC273.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC273.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC274.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC274.alternate.haplotype.tsv
+
+./Software/gatk-4.3.0.0/gatk VariantsToTable \
+  -V BASIS_v03/Data/VCF/HAPLO_alternate/BAC275.alternate.haplotype.vcf \
+  -O BASIS_v03/Data/VCF/HAPLO_alternate/BAC275.alternate.haplotype.tsv
+
+```
+
+Analyse variants called with Haplotype caller; filter out all the variants that are also called in the BACs. All remaining variants need manual verification.
+
+```{R, eval = F}
+#R
+library(dplyr)
+# Load all detected germline mutations for BACs against the alternate reference
+BAC.files <- list.files(path = "./BASIS_v03/Data/VCF/HAPLO_alternate",
+                        pattern = "\\.alternate.haplotype.tsv")
+BAC.samples <- gsub(".alternate.haplotype.tsv", "", BAC.files)
+BAC.path <- paste("./BASIS_v03/Data/VCF/HAPLO_alternate", BAC.files, sep = "/")
+BAC.vcf <- tibble()
+for (i in 1:length(BAC.path)) {
+  print(BAC.samples[i])
+  vcf.i <- read.table(BAC.path[i], header = T) %>% mutate(SAMPLE = BAC.samples[i])
+  BAC.vcf <- rbind(BAC.vcf, vcf.i)
+}
+
+BAC.filter.vcf <- BAC.vcf %>% filter(CHROM == 21 & POS >= 32545200 & POS <= 33615150)
+
+# Load all detected germline mutations for BASIS samples against the alternate reference
+BASIS.files <- list.files(path = "./BASIS_v03/Data/VCF/HAPLO_alternate/BASIS",
+                        pattern = "\\.alternate.haplotype.tsv")
+BASIS.samples <- gsub(".alternate.haplotype.tsv", "", BASIS.files)
+BASIS.path <- paste("./BASIS_v03/Data/VCF/HAPLO_alternate/BASIS", BASIS.files, sep = "/")
+BASIS.vcf <- tibble()
+for (i in 1:length(BASIS.path)) {
+  print(BASIS.samples[i])
+  vcf.i <- read.table(BASIS.path[i], header = T) %>% mutate(SAMPLE = BASIS.samples[i])
+  BASIS.vcf <- rbind(BASIS.vcf, vcf.i)
+}
+
+BASIS.filter.vcf <- BASIS.vcf %>% filter(CHROM == 21 & POS >= 32545200 & POS <= 33615150)
+
+# create individual data frames for BASIS sample
+BASIS.filter.B238.vcf <- BASIS.filter.vcf %>% filter(SAMPLE == "BASIS_8_1060_23-8")
+
+# compare each individual BASIS sample against the full collection of variants called for BACs
+# only retain unique called variants that are not seen in BACs
+BASIS.unique.B238.vcf <- anti_join(BASIS.filter.B238.vcf, BAC.filter.vcf, by = "POS")
+
+write.csv(BASIS.unique.B238.vcf, "/Volumes./BASIS_v03/Data/VCF/HAPLO_alternate/B238.HAPLO.summary.csv")
+```
+
+# Structural variant detection
+
+## Long-read sequencing data
+Alignment of long-read sequencing data of BACs and BASIS samples to alternative reference genome.
+
+```{bash, eval = F}
+
+# find names of folders and files
+cd ./BASIS_v03/Data/fastq_BACs_nanopore/
+find -maxdepth 2 -type f | sort -h > BACS_fastq_names.txt
+
+cd ./
+
+# align Nanopore sequencing data of all BACs to new alternate reference genome v03
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/01_BASIS_BAC_266_160_pH/BASIS_BAC_266_160_barcode11.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC266.hg38.MDS42.alternate.sam
+    
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/02_BASIS_BAC_267_187_rK/BASIS_BAC_267_187_barcode12.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC267.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/03_BASIS_BAC_269_195_pH/BASIS_BAC_269_195_barcode13.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC269.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/04_BASIS_BAC_270_258_rK/BASIS_BAC_270_258_barcode14.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC270.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/05_BASIS_BAC_271_298_pH/BASIS_BAC_271_298_barcode15.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC271.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/06_BASIS_BAC_272_371_rK/BASIS_BAC_272_371_barcode16.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC272.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/07_BASIS_BAC_273_413_pH/BASIS_BAC_273_413_barcode17.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC273.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/08_BASIS_BAC_274_468_rK/BAC274_rK_sHBA468_barcode04.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC274.hg38.MDS42.alternate.sam
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BACs_nanopore/09_BASIS_BAC_275_260_pH/BAC275_pH_sHBA260_barcode05.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BAC275.hg38.MDS42.alternate.sam
+
+
+# find names of folders and files
+cd ./BASIS_v03/Data/fastq_BASIS_nanopore/
+find -maxdepth 2 -type f | sort -h > BASIS_fastq_names.txt
+
+cd ./
+
+# align Nanopore sequencing data of BASIS sample to new alternate reference genome v03
+
+./guppy/bin/minimap2 \
+    -ax map-ont BASIS_v03/Genomes/hg38.MDS42.alternate.fa \
+    BASIS_v03/Data/fastq_BASIS_nanopore/BASIS_1060_23-8/BASIS_23-8_barcode19.fastq \
+    > BASIS_v03/Data/SAM/nanopore/BASIS_1060_23-8.hg38.MDS42.alternate.sam
+
+```
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./BASIS_v03/Data/SAM/nanopore/*.hg38.MDS42.alternate.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+
+Software/samtools-1.16.1/samtools view \
+    -bS ./BASIS_v03/Data/SAM/nanopore/$SAMPLE.hg38.MDS42.alternate.sam \
+    > ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.hg38.MDS42.alternate.bam
+    
+Software/samtools-1.16.1/samtools sort \
+    ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.hg38.MDS42.alternate.bam \
+    > ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.hg38.MDS42.alternate.sorted.bam
+
+Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.hg38.MDS42.alternate.sorted.bam
+
+# Dump bacterial chromosomes
+./Software/samtools-1.16.1/samtools view -L ./BASIS_v03/Data/BAM/hum.index.bed \
+                                                          -o ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.alternate.only.hum.bam \
+                                                          ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.hg38.MDS42.alternate.sorted.bam 
+
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.alternate.only.hum.bam
+
+# Compute coverage using deeptool bam coverage
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./BASIS_v03/Data/BAM/nanopore/$SAMPLE.alternate.only.hum.bam \
+      -o    ./BASIS_v03/Data/BW/nanopore/$SAMPLE.alternate.only.hum.50nt.bw \
+      -of bigwig \
+      --binSize 50 \
+      --normalizeUsing CPM
+
+done
+```
+
+## Final alignment for vis
+
+For visualisation, only region of interest was extracted, and following for SV were implemented:
+32725783	BAC266/267	    DEL:87
+33157357	BAC271	        INS:380-390
+33322295	BAC273	        DEL:2517
+33475438	BAC275	        INS:9.5kb
+
+This manually corrected reference was used to align all BASIS samples.
+
+```{bash, eval = F}
+# indexing genome
+Software/bwa/bwa index BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa
+Software/samtools-1.16.1/samtools faidx BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa
+
+# align BASIS samples with bwa
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_1_180/5A5_S5_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_1_180/5A5_S5_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_1_180.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_2_340/2A2_S2_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_2_340/2A2_S2_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_2_340.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_3_503/6A6_S6_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_3_503/6A6_S6_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_3_503.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_4_570/3A3_S3_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_4_570/3A3_S3_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_4_570.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_5_670/7A7_S7_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_5_670/7A7_S7_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_5_670.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_6_790/4A4_S4_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_6_790/4A4_S4_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_6_790.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_7_910/9A9_S9_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_7_910/9A9_S9_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_7_910.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_7-5_940_17-3/1A1_S1_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_7-5_940_17-3/1A1_S1_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_7-5_940_17-3.hg38.MDS42.alternate.chr21.curated.sam
+
+Software/bwa/bwa mem -M -t 7 BASIS_v03/Genomes/hg38.MDS42.alternate.chr21_ROI_v03_SV_curated_implemented.fa \
+  BASIS_v03/Data/fastq_BASIS/BASIS_8_1060_23-8/17A17_S17_R1_001.fastq.gz \
+  BASIS_v03/Data/fastq_BASIS/BASIS_8_1060_23-8/17A17_S17_R2_001.fastq.gz \
+  > BASIS_v03/Data/SAM/chr21_SV_implemented/BASIS_8_1060_23-8.hg38.MDS42.alternate.chr21.curated.sam
+
+```
+
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./BASIS_v03/Data/SAM/chr21_SV_implemented/*.hg38.MDS42.alternate.chr21.curated.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.chr21.curated.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+
+# Sort and generate BAM file
+./Software/samtools-1.16.1/samtools sort -@ 4 -m 2G ./BASIS_v03/Data/SAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.sam -o ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.bam
+
+# Index BAM file
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.bam
+
+# Generate stats
+./Software/samtools-1.16.1/samtools idxstats ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.bam > ./BASIS_v03/Data/IDXSTATS/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.idxstats.txt
+
+# Remove reads with multiple alignments
+./Software/samtools-1.16.1/samtools view -h ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.bam | grep -v -e 'XA:Z:' -e 'SA:Z:' | ./Software/samtools-1.16.1/samtools view -b > ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.unique.bam
+
+# Select properly paired reads
+./Software/samtools-1.16.1/samtools view -q 10 -F 1284 -f 0x02 -b ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.unique.bam > ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.bam
+
+./Software/samtools-1.16.1/samtools index ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.bam
+
+# Recompute stats
+./Software/samtools-1.16.1/samtools idxstats ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.bam > ./BASIS_v03/Data/IDXSTATS/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.idxstats.txt
+
+# Compute coverage using deeptool bam coverage
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.bam \
+      -o    ./BASIS_v03/Data/BW/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.1nt.bw \
+      -of bigwig \
+      --binSize 1 \
+      --normalizeUsing CPM
+
+done
+```
+
+```{bash, eval = F}
+#!/bin/bash -l
+for SAM in ./BASIS_v03/Data/SAM/chr21_SV_implemented/*.hg38.MDS42.alternate.chr21.curated.sam
+do
+# Recover file names
+FILE=${SAM%.hg38.MDS42.alternate.chr21.curated.sam}
+SAMPLE=${FILE##*/}
+echo $SAMPLE
+
+# Compute coverage using deeptool bam coverage with 50 nt bin size
+./Software/miniconda3/envs/deeptools/bin/bamCoverage \
+      --bam ./BASIS_v03/Data/BAM/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.bam \
+      -o    ./BASIS_v03/Data/BW/chr21_SV_implemented/$SAMPLE.hg38.MDS42.alternate.chr21.curated.paired.50nt.bw \
+      -of bigwig \
+      --binSize 50 \
+      --normalizeUsing CPM
+done
+```
